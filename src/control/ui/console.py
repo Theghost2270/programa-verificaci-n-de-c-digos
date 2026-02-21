@@ -138,9 +138,10 @@ def _ask_resolution(result):
     print("Clasificacion guardada")
 
 
-def run_console(start_page=None):
+def run_console(start_page=None, mode="verificacion"):
     set_page_range(start_page)
     print("=== CONTROL DE HOJAS ===")
+    print(f"Modo: {mode}")
     print("Escanea un codigo o escribe 'exit'")
     print("Comandos: 'reset' para reiniciar el inicio del lote")
     print("Comandos: 'reset-scan' para limpiar hojas escaneadas")
@@ -175,8 +176,9 @@ def run_console(start_page=None):
             _beep_error()
             print("Beep enviado")
             continue
-        result = process_scan(code)
+        result = process_scan(code, mode=mode)
         print(f"[{result['status']}] {result['message']}")
         if result["status"] == "ERROR":
             _beep_error()
-            _ask_resolution(result)
+            if mode == "verificacion":
+                _ask_resolution(result)

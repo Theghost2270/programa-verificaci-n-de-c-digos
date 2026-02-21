@@ -6,6 +6,9 @@ from control.data.pdf_extractor import extract_pdf, list_loaded_pdfs
 from control.config import PDF_DIR, ensure_dirs
 from control.ui.console import run_console
 
+SEQUENCE_MODE = "secuencia"
+VERIFICATION_MODE = "verificacion"
+
 
 def _show_loaded_cache():
     loaded = list_loaded_pdfs()
@@ -55,6 +58,19 @@ def _print_progress(pdf_path, processed, total):
     print(f"Indexando {name}: pagina {processed}/{total}")
 
 
+def _choose_mode():
+    print("Modo de trabajo:")
+    print("1. Revisar secuencia")
+    print("2. Verificacion")
+    while True:
+        choice = input("Selecciona modo (1-2): ").strip()
+        if choice == "1":
+            return SEQUENCE_MODE
+        if choice == "2":
+            return VERIFICATION_MODE
+        print("Opcion invalida")
+
+
 def main():
     ensure_dirs()
     try:
@@ -93,8 +109,9 @@ def main():
         print("No hay PDFs cargados para escanear")
         return
 
+    mode = _choose_mode()
     print(f"Escaneo activo sobre {len(loaded)} PDF(s) cargado(s)")
-    run_console()
+    run_console(mode=mode)
 
 
 if __name__ == "__main__":

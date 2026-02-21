@@ -111,7 +111,7 @@ def _resolve_start_page(pdf_id, page_number):
     return start_page
 
 
-def process_scan(scanned_code):
+def process_scan(scanned_code, mode="verificacion"):
     conn = get_connection()
     try:
         cur = conn.cursor()
@@ -154,18 +154,19 @@ def process_scan(scanned_code):
         pdf_id, page_number, scanned, file_name = rows[0]
 
         if scanned:
-            _log_event(
-                cur,
-                "scan_error_already_scanned",
-                code=scanned_code,
-                page_number=page_number,
-                details={"file_name": file_name, "pdf_id": pdf_id},
-            )
-            conn.commit()
+            if mode == "verificacion":
+                _log_event(
+                    cur,
+                    "scan_error_already_scanned",
+                    code=scanned_code,
+                    page_number=page_number,
+                    details={"file_name": file_name, "pdf_id": pdf_id},
+                )
+                conn.commit()
             return _result(
                 "ERROR",
                 f"Hoja {page_number} ya fue revisada ({file_name})",
-                error_type="already_scanned",
+                error_type="already_scanned" if mode == "verificacion" else None,
                 code=scanned_code,
                 page_number=page_number,
                 file_name=file_name,
@@ -174,22 +175,23 @@ def process_scan(scanned_code):
 
         start_page = _resolve_start_page(pdf_id, page_number)
         if page_number < start_page:
-            _log_event(
-                cur,
-                "scan_error_other_lot",
-                code=scanned_code,
-                page_number=page_number,
-                details={
-                    "start_page": start_page,
-                    "file_name": file_name,
-                    "pdf_id": pdf_id,
-                },
-            )
-            conn.commit()
+            if mode == "verificacion":
+                _log_event(
+                    cur,
+                    "scan_error_other_lot",
+                    code=scanned_code,
+                    page_number=page_number,
+                    details={
+                        "start_page": start_page,
+                        "file_name": file_name,
+                        "pdf_id": pdf_id,
+                    },
+                )
+                conn.commit()
             return _result(
                 "ERROR",
                 f"Hoja {page_number} es de un lote anterior en {file_name} (inicio {start_page})",
-                error_type="other_lot",
+                error_type="other_lot" if mode == "verificacion" else None,
                 code=scanned_code,
                 page_number=page_number,
                 file_name=file_name,
