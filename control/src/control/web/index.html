@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VerifEtiq - Centro de Control</title>
+  <style>
+    :root {
+      --bg: #081018;
+      --surface: #101926;
+      --surface-2: #162233;
+      --panel: rgba(16, 25, 38, 0.9);
+      --line: #233246;
+      --accent: #19d7b3;
+      --accent-2: #13a0ff;
+      --warn: #f3b64f;
+      --danger: #ff6570;
+      --text: #d8e5f1;
+      --muted: #7f98b1;
+      --strong: #f2f7fb;
+      --shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+      --radius: 18px;
+      --font-ui: "Segoe UI", "Trebuchet MS", sans-serif;
+      --font-mono: Consolas, "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: var(--font-ui);
+      background:
+        radial-gradient(circle at top left, rgba(25, 215, 179, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(19, 160, 255, 0.16), transparent 26%),
+        linear-gradient(180deg, #07111a 0%, #0a1320 100%);
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+      background-size: 34px 34px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 28px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      backdrop-filter: blur(18px);
+      background: rgba(8, 16, 24, 0.72);
+    }
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #051018;
+      font-weight: 900;
+      font-family: var(--font-mono);
+      box-shadow: 0 0 24px rgba(25, 215, 179, 0.32);
+    }
+    .brand-copy h1 {
+      margin: 0;
+      font-size: 18px;
+      color: var(--strong);
+      letter-spacing: 0.03em;
+    }
+    .brand-copy p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+    }
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .status-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--warn);
+      box-shadow: 0 0 12px rgba(243, 182, 79, 0.55);
+    }
+    .status-dot.ok {
+      background: var(--accent);
+      box-shadow: 0 0 12px rgba(25, 215, 179, 0.55);
+    }
+
+    .btn {
+      border: 0;
+      border-radius: 999px;
+      padding: 11px 16px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      transition: transform 0.18s ease, opacity 0.18s ease, background 0.18s ease;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary {
+      color: #06121c;
+      background: linear-gradient(135deg, var(--accent), #7ef2d5);
+    }
+    .btn-secondary {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 22px;
+      padding: 22px;
+    }
+    .sidebar,
+    .content-card,
+    .search-card,
+    .log-card {
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+    .sidebar {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    .section-label {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      font-family: var(--font-mono);
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .pdf-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 270px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .pdf-card {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .pdf-card strong {
+      display: block;
+      color: var(--strong);
+      font-size: 13px;
+      line-height: 1.4;
+      margin-bottom: 4px;
+    }
+    .pdf-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .pdf-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .pdf-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      min-width: 120px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .stat-card {
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .stat-value {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 27px;
+      color: var(--strong);
+    }
+    .stat-value.ok { color: var(--accent); }
+    .stat-value.warn { color: var(--warn); }
+    .stat-value.danger { color: var(--danger); }
+    .stat-label {
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .progress-box {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    .progress-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .progress-bar {
+      height: 8px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width 0.3s ease;
+    }
+
+    .content {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 18px;
+      min-width: 0;
+    }
+    .search-card,
+    .content-card,
+    .log-card {
+      padding: 20px;
+    }
+    .search-wrap {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .input {
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--strong);
+      padding: 15px 16px;
+      font-size: 15px;
+      font-family: var(--font-mono);
+      outline: none;
+    }
+    .input::placeholder { color: #6d849c; }
+
+    .result-box {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+    }
+    .result-box.ok { color: var(--accent); border-color: rgba(25, 215, 179, 0.28); }
+    .result-box.warn { color: var(--warn); border-color: rgba(243, 182, 79, 0.3); }
+    .result-box.err { color: var(--danger); border-color: rgba(255, 101, 112, 0.3); }
+
+    .content-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .content-head h2 {
+      margin: 0;
+      font-size: 20px;
+      color: var(--strong);
+    }
+    .content-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      cursor: pointer;
+    }
+    .tab.active {
+      color: #07131d;
+      border-color: transparent;
+      background: linear-gradient(135deg, var(--accent), #82f7d7);
+    }
+
+    .page-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(98px, 1fr));
+      gap: 10px;
+    }
+    .page-card {
+      padding: 12px 10px;
+      border-radius: 16px;
+      min-height: 104px;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+    }
+    .page-card.pending { border-color: rgba(255, 255, 255, 0.08); }
+    .page-card.scanned {
+      background: rgba(25, 215, 179, 0.08);
+      border-color: rgba(25, 215, 179, 0.22);
+    }
+    .page-card.duplicate {
+      background: rgba(243, 182, 79, 0.11);
+      border-color: rgba(243, 182, 79, 0.28);
+    }
+    .page-num {
+      font-family: var(--font-mono);
+      color: var(--strong);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .page-state,
+    .page-file {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .page-link {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .log-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 220px;
+      overflow: auto;
+    }
+    .log-entry {
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      display: grid;
+      grid-template-columns: 165px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      font-size: 12px;
+    }
+    .log-entry code {
+      font-family: var(--font-mono);
+      color: var(--strong);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .badge {
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-family: var(--font-mono);
+    }
+    .badge.ok { background: rgba(25, 215, 179, 0.16); color: var(--accent); }
+    .badge.warn { background: rgba(243, 182, 79, 0.17); color: var(--warn); }
+    .badge.err { background: rgba(255, 101, 112, 0.17); color: var(--danger); }
+    .badge.info { background: rgba(19, 160, 255, 0.16); color: var(--accent-2); }
+
+    .empty {
+      padding: 30px 14px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 1050px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .topbar { padding: 18px; align-items: flex-start; flex-direction: column; gap: 14px; }
+      .layout { padding: 14px; }
+      .search-wrap { grid-template-columns: 1fr; }
+      .log-entry { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">VE</div>
+        <div class="brand-copy">
+          <h1>VerifEtiq</h1>
+          <p>Centro de control del lote</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <div class="status-pill">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">Sin datos cargados</span>
+        </div>
+        <button class="btn btn-secondary" id="refreshBtn">Actualizar</button>
+        <a class="btn btn-primary" href="/report.csv">Exportar CSV</a>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <section>
+          <p class="section-label">Lotes cargados</p>
+          <div class="pdf-list" id="pdfList">
+            <div class="empty">Sin PDFs en cache.</div>
+          </div>
+        </section>
+
+        <section>
+          <p class="section-label">Resumen</p>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <p class="stat-value" id="statPdfs">0</p>
+              <p class="stat-label">PDFs</p>
+            </div>
+            <div class="stat-card">
+              <p class="stat-value" id="statPages">0</p>
+              <p class="stat-label">Hojas</p>
+            </div>
+            <div class="stat-card">
+              <p class="stat-value ok" id="statScanned">0</p>
+              <p class="stat-label">Escaneadas</p>
+            </div>
+            <div class="stat-card">
+              <p class="stat-value warn" id="statDup">0</p>
+              <p class="stat-label">Duplicados</p>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div class="progress-box">
+            <div class="progress-row">
+              <span>Progreso</span>
+              <strong id="progressPct">0%</strong>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p class="muted" style="margin:10px 0 0" id="extractInfo">
+              Esperando resumen de extracción.
+            </p>
+          </div>
+        </section>
+
+        <section>
+          <p class="section-label">Notas</p>
+          <p class="muted">
+            Esta vista ya usa la base real del proyecto. Aquí puedes revisar lotes, buscar códigos,
+            ver duplicados y exportar auditoría sin depender de datos simulados.
+          </p>
+        </section>
+      </aside>
+
+      <section class="content">
+        <div class="search-card">
+          <div class="search-wrap">
+            <input class="input" id="codeInput" type="text" placeholder="Buscar código exacto o probar un escaneo..." autocomplete="off">
+            <button class="btn btn-primary" id="searchBtn">Buscar</button>
+            <button class="btn btn-secondary" id="clearBtn">Limpiar</button>
+          </div>
+          <div class="result-box" id="resultBox">Esperando búsqueda...</div>
+        </div>
+
+        <div class="content-card">
+          <div class="content-head">
+            <div>
+              <h2>Mapa de hojas</h2>
+              <p id="mapDescription">Muestra el estado agrupado por página en todos los PDFs cargados.</p>
+            </div>
+            <div class="tabs" id="tabs">
+              <button class="tab active" data-filter="all">Todas</button>
+              <button class="tab" data-filter="pending">Pendientes</button>
+              <button class="tab" data-filter="scanned">Escaneadas</button>
+              <button class="tab" data-filter="duplicate">Con duplicado</button>
+            </div>
+          </div>
+          <div class="page-grid" id="pageGrid">
+            <div class="empty">No hay hojas cargadas todavía.</div>
+          </div>
+        </div>
+
+        <div class="log-card">
+          <div class="content-head" style="margin-bottom:12px">
+            <div>
+              <h2>Eventos recientes</h2>
+              <p>Se muestran los últimos eventos registrados en la base.</p>
+            </div>
+          </div>
+          <div class="log-list" id="logList">
+            <div class="empty">Sin eventos registrados.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    let dashboard = null;
+    let currentFilter = "all";
+
+    const pdfList = document.getElementById("pdfList");
+    const pageGrid = document.getElementById("pageGrid");
+    const logList = document.getElementById("logList");
+    const resultBox = document.getElementById("resultBox");
+    const codeInput = document.getElementById("codeInput");
+
+    async function fetchJson(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("No se pudo obtener " + url);
+      }
+      return response.json();
+    }
+
+    async function loadDashboard() {
+      dashboard = await fetchJson("/api/dashboard");
+      renderSidebar();
+      renderPages();
+      renderEvents();
+    }
+
+    function renderSidebar() {
+      const summary = dashboard.summary;
+      const latestExtract = dashboard.latest_extract;
+      const totalPages = summary.total_pages || 0;
+      const scannedPages = summary.scanned_pages || 0;
+      const pct = totalPages ? Math.round((scannedPages / totalPages) * 100) : 0;
+
+      document.getElementById("statPdfs").textContent = summary.total_pdfs;
+      document.getElementById("statPages").textContent = summary.total_pages;
+      document.getElementById("statScanned").textContent = summary.scanned_pages;
+      document.getElementById("statDup").textContent = summary.total_duplicates;
+      document.getElementById("progressPct").textContent = pct + "%";
+      document.getElementById("progressFill").style.width = pct + "%";
+
+      if (dashboard.loaded_pdfs.length) {
+        document.getElementById("statusDot").classList.add("ok");
+        document.getElementById("statusText").textContent = dashboard.loaded_pdfs.length + " PDF(s) cargado(s)";
+      } else {
+        document.getElementById("statusDot").classList.remove("ok");
+        document.getElementById("statusText").textContent = "Sin PDFs cargados";
+      }
+
+      if (latestExtract && latestExtract.pdf) {
+        document.getElementById("extractInfo").textContent =
+          "Última extracción: " + latestExtract.pdf +
+          " · " + (latestExtract.codes_found || 0) + " códigos";
+      } else {
+        document.getElementById("extractInfo").textContent =
+          "Todavía no hay resumen de extracción disponible.";
+      }
+
+      pdfList.innerHTML = dashboard.loaded_pdfs.length
+        ? dashboard.loaded_pdfs.map(pdf => `
+            <div class="pdf-card">
+              <strong>${escapeHtml(pdf.file_name)}</strong>
+              <span>${pdf.pages || 0} hojas · ${pdf.codes || 0} códigos</span>
+              <div class="pdf-actions">
+                <a class="btn btn-secondary" href="/pdf-file?id=${pdf.id}">Exportar PDF</a>
+              </div>
+            </div>
+          `).join("")
+        : '<div class="empty">Sin PDFs en cache.</div>';
+    }
+
+    function renderPages() {
+      const rows = dashboard.pages.filter(page => {
+        if (currentFilter === "pending") return !page.scanned && page.duplicate_count === 0;
+        if (currentFilter === "scanned") return page.scanned && page.duplicate_count === 0;
+        if (currentFilter === "duplicate") return page.duplicate_count > 0;
+        return true;
+      });
+
+      if (!rows.length) {
+        pageGrid.innerHTML = '<div class="empty">No hay hojas para este filtro.</div>';
+        return;
+      }
+
+      pageGrid.innerHTML = rows.map(page => {
+        const cls = page.duplicate_count > 0 ? "duplicate" : (page.scanned ? "scanned" : "pending");
+        const label = page.duplicate_count > 0
+          ? "Duplicado x" + page.duplicate_count
+          : (page.scanned ? "Escaneada" : "Pendiente");
+        return `
+          <a class="page-link" href="/pdf/${page.pdf_id}/page/${page.page_number}">
+            <div class="page-card ${cls}">
+              <div class="page-num">${page.page_number}</div>
+              <div class="page-state">${label}</div>
+              <div class="page-file">${escapeHtml(page.file_name)}</div>
+            </div>
+          </a>
+        `;
+      }).join("");
+    }
+
+    function renderEvents() {
+      if (!dashboard.recent_events.length) {
+        logList.innerHTML = '<div class="empty">Sin eventos registrados.</div>';
+        return;
+      }
+
+      logList.innerHTML = dashboard.recent_events.map(event => {
+        const badge = classifyEvent(event.event_type);
+        const location = event.file_name
+          ? event.file_name + (event.page_number ? " · pág " + event.page_number : "")
+          : (event.page_number ? "Pág " + event.page_number : "Sin ubicación");
+        return `
+          <div class="log-entry">
+            <div>${escapeHtml(event.ts || "")}</div>
+            <div>
+              <div><code>${escapeHtml(event.code || event.event_type)}</code></div>
+              <div class="muted">${escapeHtml(location)}</div>
+            </div>
+            <span class="badge ${badge.className}">${badge.label}</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    async function lookupCode() {
+      const value = codeInput.value.trim();
+      if (!value) {
+        resultBox.className = "result-box";
+        resultBox.textContent = "Escribe un código para buscarlo.";
+        return;
+      }
+
+      const result = await fetchJson("/api/code?value=" + encodeURIComponent(value));
+      if (result.status === "empty") {
+        resultBox.className = "result-box";
+        resultBox.textContent = "Escribe un código para buscarlo.";
+        return;
+      }
+      if (result.status === "not_found") {
+        resultBox.className = "result-box err";
+        resultBox.textContent = "Código no encontrado en los PDFs cargados.";
+        return;
+      }
+      if (result.status === "ambiguous") {
+        resultBox.className = "result-box warn";
+        resultBox.textContent = "Código repetido en varios PDFs: " + result.matches.map(m => `${m.file_name} pág ${m.page_number}`).join(" | ");
+        return;
+      }
+      const match = result.matches[0];
+      resultBox.className = "result-box ok";
+      resultBox.textContent = `${result.code} → ${match.file_name}, página ${match.page_number}, ${match.scanned ? "escaneada" : "pendiente"}.`;
+    }
+
+    function classifyEvent(eventType) {
+      if (eventType === "scan_ok") return { className: "ok", label: "OK" };
+      if (eventType.includes("duplicate") || eventType.includes("already_scanned")) return { className: "warn", label: "DUP" };
+      if (eventType.includes("error")) return { className: "err", label: "ERROR" };
+      return { className: "info", label: "INFO" };
+    }
+
+    function escapeHtml(text) {
+      return String(text ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", async () => {
+      await loadDashboard();
+    });
+    document.getElementById("searchBtn").addEventListener("click", lookupCode);
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      codeInput.value = "";
+      resultBox.className = "result-box";
+      resultBox.textContent = "Esperando búsqueda...";
+    });
+    codeInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") lookupCode();
+    });
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(item => item.classList.remove("active"));
+        tab.classList.add("active");
+        currentFilter = tab.dataset.filter;
+        renderPages();
+      });
+    });
+
+    loadDashboard().catch((error) => {
+      resultBox.className = "result-box err";
+      resultBox.textContent = "No se pudo cargar el dashboard: " + error.message;
+    });
+  </script>
+</body>
+</html>

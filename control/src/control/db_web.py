@@ -2,121 +2,26 @@ import html
 import json
 import sqlite3
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from urllib.parse import quote
 from urllib.parse import parse_qs, urlparse
 
 from control.config import DB_PATH, ensure_dirs
+from control.reporting import render_audit_csv_text
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+INDEX_HTML = WEB_DIR / "index.html"
 
 
 def _connect():
     ensure_dirs()
-    return sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-def _render_page(title, body):
-    return f"""<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{html.escape(title)}</title>
-  <style>
-    body {{
-      font-family: Arial, sans-serif;
-      margin: 24px;
-      color: #222;
-    }}
-    .top {{
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin-bottom: 16px;
-    }}
-    table {{
-      border-collapse: collapse;
-      width: 100%;
-      margin-top: 8px;
-    }}
-    th, td {{
-      border: 1px solid #ddd;
-      padding: 8px;
-      text-align: left;
-    }}
-    th {{
-      background: #f3f3f3;
-    }}
-    .badge {{
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 8px;
-      font-size: 12px;
-    }}
-    .ok {{ background: #d9f7d6; }}
-    .pend {{ background: #ffe9c7; }}
-    a {{ color: #0b4dbb; text-decoration: none; }}
-    a:hover {{ text-decoration: underline; }}
-  </style>
-</head>
-<body>
-{body}
-</body>
-</html>"""
-
-
-def _summary_table(status):
-    where = ""
-    if status == "pendientes":
-        where = "HAVING MIN(scanned) = 0"
-    elif status == "escaneadas":
-        where = "HAVING MIN(scanned) = 1"
-
-    with _connect() as conn:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT p.pdf_id, f.file_name, p.page_number, MIN(p.scanned) as scanned, COUNT(*) as codes "
-            "FROM pages p JOIN pdf_files f ON f.id = p.pdf_id "
-            "GROUP BY p.pdf_id, p.page_number "
-            f"{where} "
-            "ORDER BY f.file_name, p.page_number"
-        )
-        rows = cur.fetchall()
-
-        cur.execute("SELECT COUNT(DISTINCT pdf_id || ':' || page_number) FROM pages")
-        total_pages = cur.fetchone()[0]
-        cur.execute(
-            "SELECT COUNT(DISTINCT pdf_id || ':' || page_number) FROM pages WHERE scanned = 1"
-        )
-        scanned_pages = cur.fetchone()[0]
-
-    parts = [
-        "<div class='top'>",
-        f"<strong>Paginas:</strong> {total_pages}",
-        f"<strong>Escaneadas:</strong> {scanned_pages}",
-        "<span>|</span>",
-        "<a href='/?status=todas'>Todas</a>",
-        "<a href='/?status=pendientes'>Pendientes</a>",
-        "<a href='/?status=escaneadas'>Escaneadas</a>",
-        "<a href='/report'>Reporte</a>",
-        "</div>",
-        "<table>",
-        "<thead><tr><th>Archivo</th><th>Pagina</th><th>Estado</th><th>Codigos</th></tr></thead>",
-        "<tbody>",
-    ]
-
-    for pdf_id, file_name, page_number, scanned, codes in rows:
-        badge = "ok" if scanned else "pend"
-        label = "Escaneada" if scanned else "Pendiente"
-        parts.append(
-            "<tr>"
-            f"<td>{html.escape(file_name)}</td>"
-            f"<td><a href='/pdf/{pdf_id}/page/{page_number}'>{page_number}</a></td>"
-            f"<td><span class='badge {badge}'>{label}</span></td>"
-            f"<td>{codes}</td>"
-            "</tr>"
-        )
-
-    parts.extend(["</tbody>", "</table>"])
-    return "\n".join(parts)
+def _read_frontend():
+    return INDEX_HTML.read_text(encoding="utf-8")
 
 
 def _safe_query(cur, sql, params=()):
@@ -124,184 +29,283 @@ def _safe_query(cur, sql, params=()):
         cur.execute(sql, params)
         return cur.fetchall()
     except sqlite3.OperationalError:
+        return []
+
+
+def _extract_file_name(details_text):
+    if not details_text:
         return None
+    try:
+        details = json.loads(details_text)
+    except Exception:
+        return None
+    return details.get("file_name")
 
 
-def _latest_extract(cur):
-    rows = _safe_query(
-        cur,
-        "SELECT ts, details FROM events "
-        "WHERE event_type = 'extract_summary' "
-        "ORDER BY id DESC LIMIT 1"
-    )
+def _dashboard_payload():
+    with _connect() as conn:
+        cur = conn.cursor()
+
+        cur.execute("SELECT COUNT(*) FROM pdf_files")
+        total_pdfs = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM pages")
+        total_codes = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(DISTINCT pdf_id || ':' || page_number) FROM pages")
+        total_pages = cur.fetchone()[0]
+
+        cur.execute(
+            "SELECT COUNT(DISTINCT pdf_id || ':' || page_number) FROM pages WHERE scanned = 1"
+        )
+        scanned_pages = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM code_duplicates")
+        total_duplicates = cur.fetchone()[0]
+
+        duplicate_count_rows = _safe_query(
+            cur,
+            "SELECT duplicate_kind, COUNT(*) AS total "
+            "FROM code_duplicates GROUP BY duplicate_kind ORDER BY duplicate_kind",
+        )
+        duplicate_counts = {
+            row["duplicate_kind"]: row["total"] for row in duplicate_count_rows
+        }
+
+        loaded_rows = _safe_query(
+            cur,
+            """
+            SELECT
+                f.id,
+                f.file_name,
+                f.file_path,
+                COUNT(p.code) AS codes,
+                COUNT(DISTINCT p.page_number) AS pages
+            FROM pdf_files f
+            LEFT JOIN pages p ON p.pdf_id = f.id
+            GROUP BY f.id, f.file_name, f.file_path
+            ORDER BY f.loaded_at DESC, f.id DESC
+            """,
+        )
+        loaded_pdfs = [dict(row) for row in loaded_rows]
+
+        duplicate_page_rows = _safe_query(
+            cur,
+            """
+            SELECT pdf_id, page_number, COUNT(*) AS total FROM (
+                SELECT new_pdf_id AS pdf_id, new_page_number AS page_number FROM code_duplicates
+                UNION ALL
+                SELECT existing_pdf_id AS pdf_id, existing_page_number AS page_number FROM code_duplicates
+            )
+            GROUP BY pdf_id, page_number
+            """,
+        )
+        duplicate_pages = {
+            (row["pdf_id"], row["page_number"]): row["total"]
+            for row in duplicate_page_rows
+        }
+
+        page_rows = _safe_query(
+            cur,
+            """
+            SELECT
+                p.pdf_id,
+                f.file_name,
+                p.page_number,
+                MIN(p.scanned) AS scanned,
+                COUNT(*) AS codes
+            FROM pages p
+            JOIN pdf_files f ON f.id = p.pdf_id
+            GROUP BY p.pdf_id, f.file_name, p.page_number
+            ORDER BY f.file_name, p.page_number
+            """,
+        )
+        pages = []
+        for row in page_rows:
+            key = (row["pdf_id"], row["page_number"])
+            dup_total = duplicate_pages.get(key, 0)
+            pages.append(
+                {
+                    "pdf_id": row["pdf_id"],
+                    "file_name": row["file_name"],
+                    "page_number": row["page_number"],
+                    "codes": row["codes"],
+                    "scanned": bool(row["scanned"]),
+                    "duplicate_count": dup_total,
+                    "status": "duplicado"
+                    if dup_total
+                    else ("escaneada" if row["scanned"] else "pendiente"),
+                }
+            )
+
+        extract_rows = _safe_query(
+            cur,
+            "SELECT ts, details FROM events WHERE event_type = 'extract_summary' "
+            "ORDER BY id DESC LIMIT 1",
+        )
+        latest_extract = None
+        if extract_rows:
+            latest_extract = {"ts": extract_rows[0]["ts"]}
+            try:
+                latest_extract.update(json.loads(extract_rows[0]["details"] or "{}"))
+            except Exception:
+                latest_extract["details"] = extract_rows[0]["details"]
+
+        event_rows = _safe_query(
+            cur,
+            "SELECT ts, event_type, code, page_number, details "
+            "FROM events ORDER BY id DESC LIMIT 80",
+        )
+        recent_events = []
+        for row in event_rows:
+            recent_events.append(
+                {
+                    "ts": row["ts"],
+                    "event_type": row["event_type"],
+                    "code": row["code"],
+                    "page_number": row["page_number"],
+                    "file_name": _extract_file_name(row["details"]),
+                    "details": row["details"],
+                }
+            )
+
+    return {
+        "summary": {
+            "total_pdfs": total_pdfs,
+            "total_codes": total_codes,
+            "total_pages": total_pages,
+            "scanned_pages": scanned_pages,
+            "pending_pages": max(0, total_pages - scanned_pages),
+            "total_duplicates": total_duplicates,
+            "duplicate_counts": duplicate_counts,
+        },
+        "loaded_pdfs": loaded_pdfs,
+        "pages": pages,
+        "latest_extract": latest_extract,
+        "recent_events": recent_events,
+    }
+
+
+def _lookup_code_payload(code):
+    normalized = code.strip().upper()
+    if not normalized:
+        return {"status": "empty", "code": ""}
+
+    with _connect() as conn:
+        cur = conn.cursor()
+        rows = _safe_query(
+            cur,
+            """
+            SELECT p.pdf_id, p.page_number, p.scanned, f.file_name
+            FROM pages p
+            JOIN pdf_files f ON f.id = p.pdf_id
+            WHERE p.code = ?
+            ORDER BY f.file_name, p.page_number
+            """,
+            (normalized,),
+        )
+
+    if not rows:
+        return {"status": "not_found", "code": normalized}
+
+    matches = [
+        {
+            "pdf_id": row["pdf_id"],
+            "page_number": row["page_number"],
+            "scanned": bool(row["scanned"]),
+            "file_name": row["file_name"],
+        }
+        for row in rows
+    ]
+    return {
+        "status": "ok" if len(matches) == 1 else "ambiguous",
+        "code": normalized,
+        "matches": matches,
+    }
+
+
+def _pdf_file_response(pdf_id):
+    with _connect() as conn:
+        cur = conn.cursor()
+        rows = _safe_query(
+            cur,
+            "SELECT file_name, file_path FROM pdf_files WHERE id = ?",
+            (pdf_id,),
+        )
     if not rows:
         return None
-    return rows[0]
 
+    row = rows[0]
+    path = Path(row["file_path"])
+    if not path.exists() or not path.is_file():
+        return {
+            "status": 404,
+            "content": b"PDF no encontrado",
+            "content_type": "text/plain; charset=utf-8",
+            "headers": None,
+        }
 
-def _event_counts(cur):
-    rows = _safe_query(
-        cur,
-        "SELECT event_type, COUNT(*) FROM events "
-        "WHERE event_type LIKE 'scan_%' "
-        "GROUP BY event_type ORDER BY event_type"
-    )
-    return rows or []
-
-
-def _recent_events(cur, event_type, limit=50):
-    rows = _safe_query(
-        cur,
-        "SELECT ts, code, page_number, details FROM events "
-        "WHERE event_type = ? ORDER BY id DESC LIMIT ?",
-        (event_type, limit)
-    )
-    return rows or []
-
-
-def _render_report():
-    with _connect() as conn:
-        cur = conn.cursor()
-        extract_row = _latest_extract(cur)
-        counts = _event_counts(cur)
-        missing_events = _recent_events(cur, "scan_error_missing_pages", 20)
-        other_lot = _recent_events(cur, "scan_error_other_lot", 20)
-        not_found = _recent_events(cur, "scan_error_not_found", 20)
-        duplicate_resolution = _recent_events(
-            cur, "scan_resolution_already_scanned", 20
-        )
-        other_lot_resolution = _recent_events(cur, "scan_resolution_other_lot", 20)
-
-    parts = [
-        "<div class='top'>",
-        "<a href='/'><- Volver</a>",
-        "<strong>Reporte</strong>",
-        "</div>",
-    ]
-
-    if extract_row:
-        ts, details = extract_row
-        try:
-            info = json.loads(details)
-        except Exception:
-            info = {}
-        parts.append("<h3>Ultima extraccion</h3>")
-        parts.append("<table><tbody>")
-        parts.append(f"<tr><td>Fecha</td><td>{html.escape(ts)}</td></tr>")
-        for key in (
-            "pdf",
-            "start_page",
-            "end_page",
-            "total_pages",
-            "pages_processed",
-            "codes_found",
-            "inserted",
-            "duplicates",
-        ):
-            if key in info:
-                parts.append(
-                    f"<tr><td>{html.escape(key)}</td>"
-                    f"<td>{html.escape(str(info[key]))}</td></tr>"
-                )
-        parts.append("</tbody></table>")
-    else:
-        parts.append("<p>No hay resumen de extraccion.</p>")
-
-    parts.append("<h3>Eventos de escaneo</h3>")
-    if counts:
-        parts.append("<table><thead><tr><th>Tipo</th><th>Conteo</th></tr></thead><tbody>")
-        for event_type, count in counts:
-            parts.append(
-                f"<tr><td>{html.escape(event_type)}</td><td>{count}</td></tr>"
-            )
-        parts.append("</tbody></table>")
-    else:
-        parts.append("<p>No hay eventos de escaneo.</p>")
-
-    def render_event_table(title, rows):
-        parts.append(f"<h4>{html.escape(title)}</h4>")
-        if not rows:
-            parts.append("<p>Sin eventos.</p>")
-            return
-        parts.append("<table><thead><tr><th>Fecha</th><th>Codigo</th><th>Pagina</th><th>Detalles</th></tr></thead><tbody>")
-        for ts, code, page_number, details in rows:
-            parts.append(
-                "<tr>"
-                f"<td>{html.escape(ts)}</td>"
-                f"<td>{html.escape(code or '')}</td>"
-                f"<td>{html.escape(str(page_number) if page_number is not None else '')}</td>"
-                f"<td>{html.escape(details or '')}</td>"
-                "</tr>"
-            )
-        parts.append("</tbody></table>")
-
-    render_event_table("Hojas saltadas", missing_events)
-    render_event_table("Hojas de otro lote", other_lot)
-    render_event_table("Codigo no encontrado", not_found)
-    render_event_table("Clasificacion de duplicadas", duplicate_resolution)
-    render_event_table("Clasificacion de otro lote", other_lot_resolution)
-
-    return "\n".join(parts)
-
-
-def _page_detail(pdf_id, page_number):
-    with _connect() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT file_name FROM pdf_files WHERE id = ?", (pdf_id,))
-        row = cur.fetchone()
-        file_name = row[0] if row else f"PDF {pdf_id}"
-        cur.execute(
-            "SELECT code, scanned FROM pages WHERE pdf_id = ? AND page_number = ? ORDER BY code",
-            (pdf_id, page_number),
-        )
-        rows = cur.fetchall()
-
-    parts = [
-        "<div class='top'>",
-        "<a href='/'><- Volver</a>",
-        f"<strong>{html.escape(file_name)} - Pagina {page_number}</strong>",
-        "</div>",
-        "<table>",
-        "<thead><tr><th>Codigo</th><th>Estado</th></tr></thead>",
-        "<tbody>",
-    ]
-
-    for code, scanned in rows:
-        badge = "ok" if scanned else "pend"
-        label = "Escaneado" if scanned else "Pendiente"
-        parts.append(
-            "<tr>"
-            f"<td>{html.escape(code)}</td>"
-            f"<td><span class='badge {badge}'>{label}</span></td>"
-            "</tr>"
-        )
-
-    parts.extend(["</tbody>", "</table>"])
-    return "\n".join(parts)
+    filename = row["file_name"] or path.name
+    return {
+        "status": 200,
+        "content": path.read_bytes(),
+        "content_type": "application/pdf",
+        "headers": {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"
+        },
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         ensure_dirs()
-        if not DB_PATH.exists():
-            body = "<h2>No se encontro la base de datos</h2>"
-            html_text = _render_page("DB Viewer", body)
-            self._send(html_text, 404)
-            return
-
         parsed = urlparse(self.path)
+
         if parsed.path == "/":
-            params = parse_qs(parsed.query)
-            status = params.get("status", ["todas"])[0]
-            body = _summary_table(status)
-            html_text = _render_page("Control DB", body)
-            self._send(html_text)
+            if not INDEX_HTML.exists():
+                self._send_text("<h2>No se encontro el frontend</h2>", status=500)
+                return
+            self._send_bytes(_read_frontend().encode("utf-8"), "text/html; charset=utf-8")
             return
 
-        if parsed.path == "/report":
-            body = _render_report()
-            html_text = _render_page("Reporte", body)
-            self._send(html_text)
+        if parsed.path == "/api/dashboard":
+            self._send_json(_dashboard_payload())
+            return
+
+        if parsed.path == "/api/code":
+            params = parse_qs(parsed.query)
+            code = params.get("value", [""])[0]
+            self._send_json(_lookup_code_payload(code))
+            return
+
+        if parsed.path == "/pdf-file":
+            params = parse_qs(parsed.query)
+            pdf_id = params.get("id", [""])[0]
+            if not str(pdf_id).isdigit():
+                self._send_text("PDF invalido", status=400, content_type="text/plain; charset=utf-8")
+                return
+            response = _pdf_file_response(int(pdf_id))
+            if response is None:
+                self._send_text("PDF no encontrado", status=404, content_type="text/plain; charset=utf-8")
+                return
+            self._send_bytes(
+                response["content"],
+                response["content_type"],
+                status=response["status"],
+                headers=response["headers"],
+            )
+            return
+
+        if parsed.path == "/report.csv":
+            csv_text = render_audit_csv_text()
+            headers = {
+                "Content-Disposition": 'attachment; filename="auditoria.csv"'
+            }
+            self._send_bytes(
+                csv_text.encode("utf-8"),
+                "text/csv; charset=utf-8",
+                headers=headers,
+            )
             return
 
         if parsed.path.startswith("/pdf/"):
@@ -314,18 +318,65 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 pdf_id = int(parts[2])
                 page_number = int(parts[4])
-                body = _page_detail(pdf_id, page_number)
-                html_text = _render_page(f"PDF {pdf_id} Pagina {page_number}", body)
-                self._send(html_text)
+                self._send_text(
+                    self._page_detail(pdf_id, page_number),
+                    content_type="text/html; charset=utf-8",
+                )
                 return
 
-        self._send(_render_page("No encontrado", "<h2>404</h2>"), 404)
+        self._send_text("<h2>404</h2>", status=404)
 
-    def _send(self, content, status=200):
+    def _page_detail(self, pdf_id, page_number):
+        with _connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT file_name FROM pdf_files WHERE id = ?", (pdf_id,))
+            row = cur.fetchone()
+            file_name = row["file_name"] if row else f"PDF {pdf_id}"
+            cur.execute(
+                "SELECT code, scanned FROM pages WHERE pdf_id = ? AND page_number = ? ORDER BY code",
+                (pdf_id, page_number),
+            )
+            rows = cur.fetchall()
+
+        parts = [
+            "<!doctype html><html lang='es'><head><meta charset='utf-8'>",
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>",
+            f"<title>{html.escape(file_name)} - Pagina {page_number}</title>",
+            "<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#202b36}"
+            "table{border-collapse:collapse;width:100%}th,td{border:1px solid #d5dde5;padding:8px;text-align:left}"
+            "th{background:#f5f7fa}a{color:#0b67c2;text-decoration:none}</style></head><body>",
+            "<p><a href='/'>Volver</a></p>",
+            f"<h2>{html.escape(file_name)} - Pagina {page_number}</h2>",
+            "<table><thead><tr><th>Codigo</th><th>Estado</th></tr></thead><tbody>",
+        ]
+        for row in rows:
+            parts.append(
+                "<tr>"
+                f"<td>{html.escape(row['code'])}</td>"
+                f"<td>{'Escaneado' if row['scanned'] else 'Pendiente'}</td>"
+                "</tr>"
+            )
+        parts.append("</tbody></table></body></html>")
+        return "".join(parts)
+
+    def _send_json(self, payload, status=200):
+        self._send_bytes(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            "application/json; charset=utf-8",
+            status=status,
+        )
+
+    def _send_text(self, content, status=200, content_type="text/html; charset=utf-8"):
+        self._send_bytes(content.encode("utf-8"), content_type, status=status)
+
+    def _send_bytes(self, content, content_type, status=200, headers=None):
         self.send_response(status)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", content_type)
+        if headers:
+            for key, value in headers.items():
+                self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(content.encode("utf-8"))
+        self.wfile.write(content)
 
 
 def main():

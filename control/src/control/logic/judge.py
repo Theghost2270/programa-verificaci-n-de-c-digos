@@ -173,9 +173,9 @@ def process_scan(scanned_code, mode="verificacion"):
                 pdf_id=pdf_id,
             )
 
-        start_page = _resolve_start_page(pdf_id, page_number)
-        if page_number < start_page:
-            if mode == "verificacion":
+        if mode == "verificacion":
+            start_page = _resolve_start_page(pdf_id, page_number)
+            if page_number < start_page:
                 _log_event(
                     cur,
                     "scan_error_other_lot",
@@ -188,15 +188,24 @@ def process_scan(scanned_code, mode="verificacion"):
                     },
                 )
                 conn.commit()
-            return _result(
-                "ERROR",
-                f"Hoja {page_number} es de un lote anterior en {file_name} (inicio {start_page})",
-                error_type="other_lot" if mode == "verificacion" else None,
-                code=scanned_code,
-                page_number=page_number,
-                file_name=file_name,
-                pdf_id=pdf_id,
+                return _result(
+                    "ERROR",
+                    f"Hoja {page_number} es de un lote anterior en {file_name} (inicio {start_page})",
+                    error_type="other_lot",
+                    code=scanned_code,
+                    page_number=page_number,
+                    file_name=file_name,
+                    pdf_id=pdf_id,
+                )
+        else:
+            # En secuencia no se usa inicio manual de lote; se valida
+            # contra el inicio real del PDF.
+            cur.execute(
+                "SELECT MIN(page_number) FROM pages WHERE pdf_id = ?",
+                (pdf_id,),
             )
+            row = cur.fetchone()
+            start_page = row[0] if row and row[0] is not None else page_number
 
         cur.execute(
             """
